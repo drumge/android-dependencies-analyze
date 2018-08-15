@@ -1,0 +1,233 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<html xmlns="http://www.w3.org/1999/xhtml" xml:lang="zh-CN" dir="ltr">
+ <head>
+	 <meta http-equiv="Content-Type" content="text/html; charset=utf-8" />
+
+<style type="text/css">
+	.oneline {display:inline}
+	.hidden {visibility:hidden;}
+	.file_info_margin_right {margin-right: 20px;}
+
+	.input_file {
+		height: 50px;
+	}
+
+	table.out_table {
+		width: 100%;
+		font-family: verdana,arial,sans-serif;
+		font-size:11px;
+		color:#333333;
+		border-width: 1px;
+		border-color: #999999;
+		border-collapse: collapse;
+	}
+	table.out_table th {
+		font-size:15px;
+		background:#b5cfd2 ;
+		border-width: 1px;
+		padding: 8px;
+		border-style: solid;
+		border-color: #999999;
+	}
+	table.out_table td {
+		background:#dcddc0 ;
+		border-width: 1px;
+		padding: 8px;
+		border-style: solid;
+		border-color: #999999;
+	}
+
+	.button {
+		width: 140px;
+		line-height: 38px;
+		text-align: center;
+		font-weight: bold;
+		color: #fff;
+		text-shadow:1px 1px 1px #333;
+		border-radius: 5px;
+		margin:0 20px 20px 0;
+		position: relative;
+		overflow: hidden;
+		cursor: pointer; /* 鼠标移入按钮范围时出现手势 */
+	}
+
+	.button.gray {
+		color: #8c96a0;
+		text-shadow:1px 1px 1px #fff;
+		border:1px solid #dce1e6;
+		box-shadow: 0 1px 2px #fff inset,0 -1px 0 #a8abae inset;
+		background: -webkit-linear-gradient(top,#f2f3f7,#e4e8ec);
+		background: -moz-linear-gradient(top,#f2f3f7,#e4e8ec);
+		background: linear-gradient(top,#f2f3f7,#e4e8ec);
+	}
+
+</style>
+
+ </head> 
+ <body> 
+
+	<div id="input_area">
+		<div id="input_file_1" >
+			<input type="file" id="file_1" class="oneline input_file">
+			<div id="file_info_1" class="oneline hidden">
+				version: <p class="oneline file_info_margin_right" id="version_1"></p>
+				size: <p class="oneline file_info_margin_right" id="size_1"></p>
+				date: <p class="oneline file_info_margin_right" id="date_1"></p>
+			</div>
+		</div>
+
+		<div id="input_file_2" >
+			<input type="file" id="file_2" class="oneline input_file">
+			<div id="file_info_2" class="oneline hidden">
+				version: <p class="oneline file_info_margin_right" id="version_2"></p>
+				size: <p class="oneline file_info_margin_right" id="size_2"></p>
+				date: <p class="oneline file_info_margin_right" id="date_2"></p>
+			</div>
+		</div>
+	</div>
+
+	<button class="button gray" id="compare_button" > COMPARE </button>
+
+	<div id="output">
+		<table class="out_table hidden" id="compare_table">
+			<thead>
+				<tr> <th>dependency</th> <th>version</th> <th>size</th> <th>type</th> <th>change</th> </tr>
+			</thead>
+			<tbody>
+				
+			</tbody>
+		</table>
+	</div>
+
+	<script>
+		window.onload=function(){
+
+			var json = {
+				data1: {},
+				data2: {}
+			}
+			readFile(1, json)
+			readFile(2, json)
+
+			var compare_button = document.getElementById("compare_button")
+			compare_button.onclick = function() {
+				var dataMap1 = convertMap(json.data1)
+				var dataMap2 = convertMap(json.data2)
+
+				var compare_table = document.getElementById("compare_table")
+				deleteAllRow(compare_table)
+				compare_table.style.visibility = "visible"
+				dataMap1.forEach(function(value, key) {
+					var d = dataMap2.get(key)
+					addRow(compare_table, value, d)
+					dataMap2.delete(key)
+				});
+
+				dataMap2.forEach(function(value, key) {
+					addRow(compare_table, undefined, value)
+				});
+			}
+		}
+
+		function deleteAllRow(table) {
+			var tableLength = table.rows.length;
+			for(var i = 1; i < tableLength; i++) {
+				table.deleteRow(1);
+			}
+		}
+
+
+		function addRow(compare_table, d1, d2) {
+			var d = d1 == undefined ? d2 : d1;
+			var tr = compare_table.insertRow(compare_table.rows.length)
+			var name = tr.insertCell(0)
+			name.innerHTML = d.name
+
+			var version = tr.insertCell(1)
+			version.innerHTML = tbCell(d1, d2, "version")
+
+			var s1 = d1 == undefined ? 0 : d1.size
+			var s2 = d2 == undefined ? 0 : d2.size
+			var size = tr.insertCell(2)
+			size.innerHTML = calKb(s1) + " / " + calKb(s2)
+
+			var type = tr.insertCell(3)
+			type.innerHTML = tbCell(d1, d2, "dependency_type")
+
+			var change = tr.insertCell(4)
+			var dif = s1 - s2
+			var difKb = calKb(Math.abs(dif))
+			// <font color="#0000FF">你好</font>
+			change.innerHTML = dif == 0 ? "持平" : dif > 0 ? "<font color='#007500'>减少 " + difKb + "</font>" : "<font color='#A23400'>增加 " + difKb + "</font>"
+
+		}
+
+		function convertMap(data) {
+			var map = new Map()
+			for (var i in data.modules) {
+				dependencies(data.modules[i].dependencies, map)
+			}
+			return map
+		}
+
+		function dependencies(ds, map) {
+			for (var j in ds) {
+				var dependency = ds[j]
+				map.set(dependency.name, dependency)
+				if (dependency.children != undefined && dependency.children.length > 0) {
+					dependencies(dependency.children, map)
+				}
+			}
+		}
+
+		function tbCell(d1, d2, key) {
+			return (d1 == undefined ? "--" : d1[key]) + " / " + (d2 == undefined ? "--" : d2[key])
+
+		}
+
+
+
+		function readFile(index, data) {
+			var another_index = index == 1 ? 2 : 1;
+			var info = document.getElementById("file_info_" + index)
+			var input_file = document.getElementById("file_" + index);
+			var another_input_file = document.getElementById("file_" + another_index);
+			var version = document.getElementById("version_" + index);
+			var date = document.getElementById("date_" + index);
+			var size = document.getElementById("size_" + index);
+			input_file.onchange = function() {
+				var file = input_file.files[0];
+				var another_file = another_input_file.files[0]
+				if (another_file != undefined && file.name == another_file.name) {
+					alert("两个文件不能一样")
+					input_file.value = ''
+					return
+				}
+				var reader = new FileReader();
+				reader.onload = function() {
+					var json = data['data' + index] = JSON.parse(reader.result)
+					info.style.visibility = "visible"
+
+
+					version.innerHTML = json.version
+					date.innerHTML = json.date
+					size.innerHTML = calKb(json.total_size)
+				}
+				reader.readAsBinaryString(file)
+			}
+		}
+
+		function calKb(size) {
+			var kb = (size / 1024).toFixed(2);
+			return kb + "KB"
+		}
+	</script>
+ </body>
+</html>
+
+
+
+
+
+
+

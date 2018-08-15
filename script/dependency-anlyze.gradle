@@ -1,0 +1,258 @@
+import groovy.json.JsonOutput
+
+println()
+println("dependexy-anlyze")
+println()
+
+/*
+{
+    "version": "1.2.6-SNAPSHOT"
+    "date": "2018-8-06 12:50:12"
+    "total_size": 99,// long 项目总的大小
+    "modules": [
+        {
+            "module": "app",
+            "total_size": 10 // long 总大小
+            "dependencies": [
+                {
+                    "name": "group:name",
+                    "version":"1.2.0"
+                    "file_type":"jar",
+                    "dependency_type":"runtime",
+                    "size":7757 // long 单位 B,
+                    "children": [
+                        {
+                            "name": "group:name:version",
+                            "file_type":"jar",
+                            "dependency_type":"runtime",
+                            "size":7757 // long 单位 B,
+                            "children": [
+                            ]
+                        }
+                    ]
+                },
+            ],
+        },
+    ],
+}
+*/
+
+if (isApplication(project)) {
+    new DependencyAnalyze(project)
+} else {
+    project.rootProject.subprojects.each {
+        if (isApplication(it)) {
+            new DependencyAnalyze(project)
+        }
+    }
+}
+
+task dependemcyAnalyze() {
+    description = 'analyze dependencies of android gradle'
+}
+
+private boolean isApplication(Project project) {
+    return project.plugins.hasPlugin('com.android.application')
+}
+
+class Dependencies {
+    String version
+    String date
+    String total_size
+    List<Module> modules
+
+}
+
+class Module {
+    String module
+    String total_size
+    List<DependencyNode> dependencies
+}
+
+class DependencyNode {
+    String name
+    String version
+    String file_type
+    String dependency_type
+    long size
+    List<DependencyNode> children
+}
+
+class DependencyAnalyze {
+
+    private Project mProject
+    private File writer
+    private Dependencies mDependencies
+
+    private Map<String, Long> appAllDependencies = new HashMap<>()
+    private Map<String, Long> moduleAllDependencies = new HashMap<>()
+
+    DependencyAnalyze(Project project) {
+        this.mProject = project
+
+        hookTask()
+    }
+
+    private void hookTask() {
+
+
+        mProject.gradle.taskGraph.whenReady {
+            it.allTasks.each {
+                if (it.name == 'javaPreCompileDebug'  // android application/library module debug
+                        || it.name == 'javaPreCompileRelease'  // android application/library module release
+                        || it.name == 'compileJava') { // java library module
+                    it.doFirst {
+                        initFile()
+                        configuration(it.project, mDependencies.modules)
+                    }
+                    it.doLast {
+                        long appTotal = caculateTotalSize(appAllDependencies)
+                        appAllDependencies.clear()
+                        mDependencies.total_size = appTotal
+                        File jsonFile = new File(outputDir(), '/analyze-dependencies-json.txt')
+                        if (!jsonFile.exists()) {
+                            jsonFile.createNewFile()
+                        }
+                        jsonFile.write(JsonOutput.toJson(mDependencies))
+                        println(mDependencies.properties)
+                    }
+                }
+            }
+        }
+    }
+
+    private void initFile() {
+        if (writer == null) {
+            writer = new File(outputDir(), '/analyze-dependencies.txt')
+            if (!writer.exists()) {
+                writer.createNewFile()
+            }
+            writer.write('')
+        }
+
+        if (mDependencies == null) {
+            mDependencies = new Dependencies()
+            mDependencies.version = mProject.version
+            mDependencies.date = new Date().format("yyyy-MM-dd HH:mm:ss.SSS")
+            List<Module> modules = new ArrayList<>()
+            mDependencies.modules = modules
+        }
+    }
+
+    private void configuration(Project project, List<Module> modules) {
+        project.configurations.each { Configuration config ->
+            String name = config.name
+            if (/*name == 'debugCompileClasspath' */ // android application/library module debug
+            name == 'releaseCompileClasspath'  // android application/library module release
+                    || name == 'compileClasspath') { // java library module
+
+                writer.append(">> ${project.name}\n")
+                writer.append("-----------------------------------------------------------------------------\n")
+                Module module = new Module()
+                modules.add(module)
+                module.module = project.name
+                firstLevelDependencies(config, module)
+                writer.append("-----------------------------------------------------------------------------\n\n")
+
+                long moduleTotal = caculateTotalSize(moduleAllDependencies)
+                module.total_size = moduleTotal
+                appAllDependencies.putAll(moduleAllDependencies)
+                moduleAllDependencies.clear()
+            }
+        }
+    }
+
+    private long caculateTotalSize(Map<String, Long> map) {
+        long total = 0
+        map.values().each {
+            total += it
+        }
+        return total
+    }
+
+    private void firstLevelDependencies(Configuration config, Module module) {
+        List<DependencyNode> dependencies = new ArrayList<>()
+        module.dependencies = dependencies
+        def firstLevelDependencies = config.resolvedConfiguration.firstLevelModuleDependencies
+        firstLevelDependencies.each { ResolvedDependency dependency ->
+            DependencyNode node = addDependency(dependency, 0)
+            dependencies.add(node)
+            String type = dependency.configuration.toLowerCase()
+            if (!type.endsWith('apielements')) {
+                List<DependencyNode> children = new ArrayList<>()
+                node.children = children
+                dependenciesChildren(dependency, 0, children)
+            }
+        }
+    }
+
+
+    private void dependenciesChildren(ResolvedDependency dependency, int level, List<DependencyNode> children) {
+        level += 1
+        dependency.children.each {
+            DependencyNode node = addDependency(it, level)
+            children.add(node)
+            List<DependencyNode> subChildren = new ArrayList<>()
+            node.children = subChildren
+            dependenciesChildren(it, level, subChildren)
+        }
+
+    }
+
+    private DependencyNode addDependency(ResolvedDependency dependency, int level) {
+        String type = " "
+        Long size = 0
+        ResolvedArtifact artifact = findArtifact(dependency)
+        if (artifact != null) {
+            type = artifact.getType()
+            size = artifact.file.size()
+        }
+
+        size = size == null ? 0 : size
+
+        moduleAllDependencies.put(getName(dependency), size)
+
+        String sizeStr = String.format("%.2f KB", size / 1024.0)
+        StringBuilder content = new StringBuilder()
+        for (int i = 0; i < level; ++i) {
+            content.append('\t')
+        }
+        content.append(dependency.name)
+        content.append(';')
+        content.append(type)
+        content.append(';')
+        content.append(dependency.configuration)
+        content.append(';')
+        content.append(sizeStr)
+        content.append('\n')
+        writer.append(content.toString())
+
+        DependencyNode node = new DependencyNode()
+        node.name = getName(dependency)
+        node.version = dependency.moduleVersion
+        node.size = size
+        node.file_type = type
+        node.dependency_type = dependency.configuration
+        return node
+    }
+
+    private String getName(ResolvedDependency dependency) {
+        return "${dependency.moduleGroup}:${dependency.moduleName}"
+    }
+
+    private ResolvedArtifact findArtifact(ResolvedDependency dependency) {
+        if (!dependency.configuration.contains('ApiElements')) {
+            return dependency.moduleArtifacts.find {
+                dependency.name == it.moduleVersion.toString()
+            }
+        }
+    }
+
+    private String outputDir() {
+        File dir = new File(mProject.rootProject.buildDir, "/dependencies/")
+        if (!dir.exists()) {
+            dir.mkdirs()
+        }
+        return dir
+    }
+}
