@@ -109,7 +109,7 @@ class DependencyAnalyze {
                         long appTotal = caculateTotalSize(appAllDependencies)
                         appAllDependencies.clear()
                         mDependencies.total_size = appTotal
-                        File jsonFile = new File(outputDir(), '/analyze-dependencies-json.txt')
+                        File jsonFile = new File(outputDir(), '/analyze-dependencies.json')
                         if (!jsonFile.exists()) {
                             jsonFile.createNewFile()
                         }
